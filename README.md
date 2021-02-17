@@ -1,3 +1,3 @@
 # LINKS
 
-A rather plain pathbased redirection service
+A rather plain path based redirection service
