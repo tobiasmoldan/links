@@ -14,8 +14,6 @@ mod server;
 
 #[inline]
 async fn run() -> Result<()> {
-    pretty_env_logger::init();
-
     let matches = clap_app!(links =>
         (version: build::PKG_VERSION)
         (author: "Tobias Moldan <contact@tobiasmoldan.com>")
@@ -47,7 +45,7 @@ async fn run() -> Result<()> {
 
     let (_, server) =
         warp::serve(filter).bind_with_graceful_shutdown(([0, 0, 0, 0], port), async {
-            tokio::signal::ctrl_c().await.unwrap();
+            tokio::signal::ctrl_c().await.ok();
         });
 
     server.await;
@@ -59,6 +57,12 @@ async fn run() -> Result<()> {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
+    if shadow_rs::is_debug() {
+        pretty_env_logger::init();
+    } else {
+        env_logger::init();
+    }
+
     if let Err(e) = run().await {
         error!("{}", e);
         std::process::exit(1);
