@@ -5,6 +5,8 @@ pub enum Error {
     NoConnectionString,
     #[error("db error: {0}")]
     DbError(#[from] sqlx::Error),
+    #[error("failed to run migrations: {0}")]
+    MigrationError(#[from] sqlx::migrate::MigrateError),
     #[error("unknown error")]
     Unknown,
 }

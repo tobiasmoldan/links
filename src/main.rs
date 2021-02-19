@@ -1,8 +1,9 @@
 use clap::clap_app;
+use dotenv::dotenv;
 use log::error;
 use shadow_rs::shadow;
 use sqlx::{Any, Pool};
-use std::str::FromStr;
+use std::{env, str::FromStr};
 use warp::Filter;
 
 use error::{Error, Result};
@@ -25,19 +26,21 @@ async fn run() -> Result<()> {
 
     let port = matches
         .value_of("PORT")
-        .or_else(|| option_env!("LNKS_PORT"))
-        .map(|p| u16::from_str(p).ok())
+        .map(String::from)
+        .or_else(|| env::var("LNKS_PORT").ok())
+        .map(|p| u16::from_str(&p).ok())
         .flatten()
         .unwrap_or(5000);
 
     let conn_str = matches
         .value_of("CONN")
-        .or_else(|| option_env!("LNKS_CONN"))
+        .map(String::from)
+        .or_else(|| env::var("LNKS_CONN").ok())
         .ok_or(Error::NoConnectionString)?;
 
-    let pool = Pool::<Any>::connect(conn_str)
-        .await
-        .map_err(|e| error::Error::DbError(e))?;
+    let pool = Pool::<Any>::connect(&conn_str).await.map_err(Error::from)?;
+
+    sqlx::migrate!().run(&pool).await.map_err(Error::from)?;
 
     let filter = server::filter(pool.clone());
     let log = warp::log("links::api");
@@ -57,6 +60,8 @@ async fn run() -> Result<()> {
 
 #[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() {
+    dotenv().ok();
+
     if shadow_rs::is_debug() {
         pretty_env_logger::init();
     } else {

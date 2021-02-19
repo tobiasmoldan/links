@@ -805,6 +805,7 @@ name = "links"
 version = "2.0.0-alpha.0"
 dependencies = [
  "clap",
+ "dotenv",
  "env_logger 0.8.3",
  "log",
  "pretty_env_logger",
