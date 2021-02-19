@@ -1,7 +1,7 @@
 use clap::clap_app;
 use log::error;
 use shadow_rs::shadow;
-use sqlx::PgPool;
+use sqlx::{Any, Pool};
 use std::str::FromStr;
 use warp::Filter;
 
@@ -35,7 +35,7 @@ async fn run() -> Result<()> {
         .or_else(|| option_env!("LNKS_CONN"))
         .ok_or(Error::NoConnectionString)?;
 
-    let pool = PgPool::connect(conn_str)
+    let pool = Pool::<Any>::connect(conn_str)
         .await
         .map_err(|e| error::Error::DbError(e))?;
 
@@ -55,7 +55,7 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread", worker_threads = 1)]
 async fn main() {
     if shadow_rs::is_debug() {
         pretty_env_logger::init();
