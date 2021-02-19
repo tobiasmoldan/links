@@ -122,84 +122,24 @@ fn main() {
 fn run_server(matches: Option<&ArgMatches>) -> Result<()> {
     let mut config = ServerConfig::default();
 
-    if let Some(conn) = env::var("LNKS_CONNECTION").ok() {
-        config.db_conn = conn;
+    if let Some(c) = parse(matches, "CONNECTION") {
+        config.db_conn = c;
     }
 
-    if let Some(conn) = matches
-        .map(|m| m.value_of("CONNECTION"))
-        .flatten()
-        .map(|s| s.to_string())
-    {
-        config.db_conn = conn;
+    if let Some(p) = parse(matches, "PORT") {
+        config.port = p;
     }
 
-    if let Some(port) = env::var("LNKS_PORT")
-        .ok()
-        .map(|s| u16::from_str(&s).ok())
-        .flatten()
-    {
-        config.port = port;
+    if let Some(t) = parse(matches, "ASYNC_THREADS") {
+        config.async_threads = t;
     }
 
-    if let Some(port) = matches
-        .map(|m| m.value_of("PORT"))
-        .flatten()
-        .map(|s| u16::from_str(s).ok())
-        .flatten()
-    {
-        config.port = port;
+    if let Some(t) = parse(matches, "AUTH_THREADS") {
+        config.auth_threads = t;
     }
 
-    if let Some(async_threads) = env::var("LNKS_ASYNC_THREADS")
-        .ok()
-        .map(|s| usize::from_str(&s).ok())
-        .flatten()
-    {
-        config.async_threads = async_threads;
-    }
-
-    if let Some(async_threads) = matches
-        .map(|m| m.value_of("ASYNC_THREADS"))
-        .flatten()
-        .map(|s| usize::from_str(s).ok())
-        .flatten()
-    {
-        config.async_threads = async_threads;
-    }
-
-    if let Some(auth_threads) = env::var("LNKS_AUTH_THREADS")
-        .ok()
-        .map(|s| usize::from_str(&s).ok())
-        .flatten()
-    {
-        config.auth_threads = auth_threads;
-    }
-
-    if let Some(auth_threads) = matches
-        .map(|m| m.value_of("AUTH_THREADS"))
-        .flatten()
-        .map(|s| usize::from_str(s).ok())
-        .flatten()
-    {
-        config.auth_threads = auth_threads;
-    }
-
-    if let Some(sync_threads) = env::var("LNKS_SYNC_THREADS")
-        .ok()
-        .map(|s| usize::from_str(&s).ok())
-        .flatten()
-    {
-        config.blocking_threads = sync_threads;
-    }
-
-    if let Some(sync_threads) = matches
-        .map(|m| m.value_of("SYNC_THREADS"))
-        .flatten()
-        .map(|s| usize::from_str(s).ok())
-        .flatten()
-    {
-        config.blocking_threads = sync_threads;
+    if let Some(t) = parse(matches, "SYNC_THREADS") {
+        config.blocking_threads = t;
     }
 
     start_server(&config)
@@ -207,4 +147,21 @@ fn run_server(matches: Option<&ArgMatches>) -> Result<()> {
 
 fn run_add(matches: Option<&ArgMatches>) -> Result<()> {
     todo!()
+}
+
+fn parse<T>(matches: Option<&ArgMatches>, name: &str) -> Option<T>
+where
+    T: FromStr + Sized,
+{
+    matches
+        .map(|m| m.value_of(name))
+        .flatten()
+        .map(|s| T::from_str(s).ok())
+        .flatten()
+        .or_else(|| {
+            env::var(&format!("{}_{}", "LNKS", name))
+                .ok()
+                .map(|s| T::from_str(&s).ok())
+                .flatten()
+        })
 }
