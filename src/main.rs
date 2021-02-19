@@ -3,6 +3,7 @@ use dotenv::dotenv;
 use log::error;
 use shadow_rs::shadow;
 use sqlx::{Any, Pool};
+use std::sync::Arc;
 use std::{env, str::FromStr};
 use warp::Filter;
 
@@ -13,8 +14,7 @@ shadow!(build);
 mod error;
 mod server;
 
-#[inline]
-async fn run() -> Result<()> {
+async fn run(thread_pool: Arc<rayon::ThreadPool>) -> Result<()> {
     let matches = clap_app!(links =>
         (version: build::PKG_VERSION)
         (author: "Tobias Moldan <contact@tobiasmoldan.com>")
@@ -42,7 +42,7 @@ async fn run() -> Result<()> {
 
     sqlx::migrate!().run(&pool).await.map_err(Error::from)?;
 
-    let filter = server::filter(pool.clone());
+    let filter = server::filter(pool.clone(), thread_pool);
     let log = warp::log("links::api");
     let filter = filter.with(log);
 
@@ -58,8 +58,7 @@ async fn run() -> Result<()> {
     Ok(())
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 1)]
-async fn main() {
+fn main() {
     dotenv().ok();
 
     if shadow_rs::is_debug() {
@@ -68,7 +67,19 @@ async fn main() {
         env_logger::init();
     }
 
-    if let Err(e) = run().await {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .worker_threads(2)
+        .max_blocking_threads(128)
+        .build()
+        .unwrap();
+
+    let thread_pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(4)
+        .build()
+        .unwrap();
+
+    if let Err(e) = runtime.block_on(run(Arc::new(thread_pool))) {
         error!("{}", e);
         std::process::exit(1);
     }

@@ -17,6 +17,9 @@ log = "0.4"
 pretty_env_logger = "0.4"
 env_logger = "0.8"
 dotenv = "0.15"
+base64 = "0.13"
+bcrypt = "0.9"
+rayon = "1"
 
 [dependencies.sqlx]
 version = "0.5"
