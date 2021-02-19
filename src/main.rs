@@ -12,69 +12,10 @@ use error::{Error, Result};
 
 shadow!(build);
 
+mod command;
+mod config;
 mod error;
 mod server;
-
-struct ServerConfig {
-    async_threads: usize,
-    blocking_threads: usize,
-    auth_threads: usize,
-    port: u16,
-    db_conn: String,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        ServerConfig {
-            async_threads: 2,
-            blocking_threads: 128,
-            auth_threads: 4,
-            port: 5000,
-            db_conn: "sqlite::memory:".to_string(),
-        }
-    }
-}
-
-fn start_server(config: &ServerConfig) -> Result<()> {
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .worker_threads(config.async_threads)
-        .max_blocking_threads(config.blocking_threads)
-        .build()
-        .unwrap();
-
-    let th_pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(config.auth_threads)
-        .build()
-        .unwrap();
-
-    let th_pool = Arc::new(th_pool);
-
-    async fn run(config: &ServerConfig, th_pool: Arc<ThreadPool>) -> Result<()> {
-        let db_pool = AnyPool::connect(&config.db_conn)
-            .await
-            .map_err(Error::from)?;
-
-        sqlx::migrate!().run(&db_pool).await.map_err(Error::from)?;
-
-        let filter = server::filter(db_pool.clone(), th_pool);
-        let log = warp::log("links::api");
-        let filter = filter.with(log);
-
-        let (_, server) =
-            warp::serve(filter).bind_with_graceful_shutdown(([0, 0, 0, 0], config.port), async {
-                tokio::signal::ctrl_c().await.ok();
-            });
-
-        server.await;
-
-        db_pool.close().await;
-
-        Ok(())
-    }
-
-    rt.block_on(run(config, th_pool.clone()))
-}
 
 fn main() {
     dotenv().ok();
@@ -99,10 +40,11 @@ fn main() {
         )
         (@subcommand add =>
             (about: "add entity to database")
-            (@arg USER: -u --user +takes_value +required "add new user")
-            (@arg REDIRECT: --url +takes_value +required conflicts_with[USER] "add new redirect")
-            (@arg PATH: --path +takes_value +required conflicts_with[USER] "set path")
-            (@arg CONNECTION: -c --connection +takes_value "database connection string, defaults to 'sqlite::memory:'")
+            (@arg CONNECTION: -c --connection +takes_value "database connection string")
+            (@subcommand user =>
+                (@arg NAME: +required)
+                (@arg CONNECTION: -c --connection +takes_value "database connection string")
+            )
         )
     )
     .get_matches();
@@ -120,7 +62,7 @@ fn main() {
 }
 
 fn run_server(matches: Option<&ArgMatches>) -> Result<()> {
-    let mut config = ServerConfig::default();
+    let mut config = config::ServerConfig::default();
 
     if let Some(c) = parse(matches, "CONNECTION") {
         config.db_conn = c;
@@ -142,11 +84,52 @@ fn run_server(matches: Option<&ArgMatches>) -> Result<()> {
         config.blocking_threads = t;
     }
 
-    start_server(&config)
+    command::run(&config)
 }
 
 fn run_add(matches: Option<&ArgMatches>) -> Result<()> {
-    todo!()
+    let conn = parse(matches, "CONNECTION");
+
+    if let Some(matches) = matches {
+        match matches.subcommand() {
+            ("user", matches) => run_add_user(conn, matches),
+            _ => Err(Error::InvalidCommand),
+        }
+    } else {
+        Err(Error::InvalidCommand)
+    }
+}
+
+fn run_add_user(conn: Option<String>, matches: Option<&ArgMatches>) -> Result<()> {
+    let conn = conn
+        .or_else(|| parse(matches, "CONNECTION"))
+        .ok_or(Error::InvalidCommand)?;
+
+    let user = matches
+        .map(|matches| matches.value_of("NAME"))
+        .flatten()
+        .map(|s| s.to_string())
+        .ok_or(Error::InvalidCommand)?;
+
+    println!("Enter password below:");
+    let mut password = String::new();
+    std::io::stdin()
+        .read_line(&mut password)
+        .map_err(|_| Error::Custom("failed to read pw from stdin"))?;
+
+    password = password.trim().to_string();
+
+    if password.len() == 0 {
+        return Err(Error::Custom("password too short"));
+    }
+
+    let config = config::AddConfig::User {
+        db_url: conn,
+        username: user,
+        password,
+    };
+
+    command::add_user(&config)
 }
 
 fn parse<T>(matches: Option<&ArgMatches>, name: &str) -> Option<T>

@@ -17,6 +17,8 @@ pub enum Error {
     MigrationError(#[from] sqlx::migrate::MigrateError),
     #[error("unknown error")]
     Unknown,
+    #[error("{0}")]
+    Custom(&'static str),
 }
 
 impl Reject for Error {}
