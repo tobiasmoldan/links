@@ -153,13 +153,14 @@ fn parse<T>(matches: Option<&ArgMatches>, name: &str) -> Option<T>
 where
     T: FromStr + Sized,
 {
+    let project_name = String::from(build::PROJECT_NAME);
     matches
         .map(|m| m.value_of(name))
         .flatten()
         .map(|s| T::from_str(s).ok())
         .flatten()
         .or_else(|| {
-            env::var(&format!("{}_{}", "LNKS", name))
+            env::var(&format!("{}_{}", project_name.to_ascii_uppercase(), name))
                 .ok()
                 .map(|s| T::from_str(&s).ok())
                 .flatten()
