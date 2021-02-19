@@ -1,12 +1,9 @@
 use clap::{clap_app, ArgMatches};
 use dotenv::dotenv;
 use log::error;
-use rayon::ThreadPool;
 use shadow_rs::shadow;
-use sqlx::{Any, AnyPool, Pool};
+use std::process::exit;
 use std::{env, str::FromStr};
-use std::{process::exit, sync::Arc};
-use warp::Filter;
 
 use error::{Error, Result};
 
@@ -103,7 +100,7 @@ fn run_add(matches: Option<&ArgMatches>) -> Result<()> {
 fn run_add_user(conn: Option<String>, matches: Option<&ArgMatches>) -> Result<()> {
     let conn = conn
         .or_else(|| parse(matches, "CONNECTION"))
-        .ok_or(Error::InvalidCommand)?;
+        .ok_or(Error::NoConnectionString)?;
 
     let user = matches
         .map(|matches| matches.value_of("NAME"))
@@ -115,7 +112,7 @@ fn run_add_user(conn: Option<String>, matches: Option<&ArgMatches>) -> Result<()
     let mut password = String::new();
     std::io::stdin()
         .read_line(&mut password)
-        .map_err(|_| Error::Custom("failed to read pw from stdin"))?;
+        .map_err(|_| Error::Custom("failed to read password"))?;
 
     password = password.trim().to_string();
 
