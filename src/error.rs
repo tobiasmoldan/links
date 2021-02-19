@@ -3,6 +3,8 @@ use warp::reject::Reject;
 pub type Result<T> = std::result::Result<T, Error>;
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
+    #[error("invalid command")]
+    InvalidCommand,
     #[error("missing database connection string")]
     NoConnectionString,
     #[error("unauthorized")]
