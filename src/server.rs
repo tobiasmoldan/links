@@ -1,19 +1,129 @@
 use base64::decode;
 use bcrypt::verify;
 use sqlx::AnyPool;
-use std::sync::Arc;
+use std::{convert::Infallible, iter::IntoIterator, str::FromStr, sync::Arc};
 use tokio::sync::oneshot;
-use warp::{Filter, Rejection};
+use warp::{http::uri::Uri, hyper::StatusCode, path::FullPath, reply, Filter, Rejection, Reply};
 
-use crate::error::{Error, Result};
+use crate::error::{ApiError, ApiResult};
+use crate::model;
 
 pub fn filter(
     db_pool: AnyPool,
     th_pool: Arc<rayon::ThreadPool>,
-) -> impl Filter<Extract = (String,), Error = Rejection> + Clone {
+) -> impl Filter<Extract = impl Reply, Error = Infallible> + Clone {
     warp::any()
-        .and(basic_auth_filter(db_pool, th_pool))
-        .map(|username| format!("Hello {}!", username))
+        .and(new_filter(db_pool.clone(), th_pool.clone()))
+        .or(get_own_filter(db_pool.clone(), th_pool.clone()))
+        .or(get_filter(db_pool.clone()))
+        .recover(handle_rejection)
+}
+
+fn get_own_filter(
+    db_pool: AnyPool,
+    th_pool: Arc<rayon::ThreadPool>,
+) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::any()
+        .and(warp::path::end())
+        .and(warp::get())
+        .and(basic_auth_filter(db_pool.clone(), th_pool))
+        .and_then(move |username: String| {
+            let db_pool = db_pool.clone();
+            async move { get_own(db_pool, username).await.map_err(Rejection::from) }
+        })
+}
+
+async fn get_own(db_pool: AnyPool, username: String) -> ApiResult<impl Reply> {
+    let entries = sqlx::query_as::<_, model::db::Entry>(
+        "SELECT created,url, path FROM redirect WHERE \"user\" = $1",
+    )
+    .bind(username)
+    .fetch_all(&db_pool)
+    .await?
+    .into_iter()
+    .map(model::http::EntryResponse::from)
+    .collect::<Vec<_>>();
+
+    Ok(warp::reply::json(&entries))
+}
+
+fn get_filter(db_pool: AnyPool) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
+    warp::any()
+        .and(warp::get())
+        .and(warp::path::full())
+        .and_then(move |path: FullPath| {
+            let db_pool = db_pool.clone();
+            async move { get(db_pool, path).await.map_err(Rejection::from) }
+        })
+}
+
+async fn get(db_pool: AnyPool, path: FullPath) -> ApiResult<impl Reply> {
+    #[derive(sqlx::FromRow)]
+    struct UrlContainer {
+        url: String,
+    }
+
+    let urlc =
+        sqlx::query_as::<_, UrlContainer>("SELECT url FROM redirect WHERE path = $1 LIMIT 1")
+            .bind(path.as_str().trim_matches('/'))
+            .fetch_optional(&db_pool)
+            .await?
+            .ok_or(ApiError::NotFound)?;
+
+    match Uri::from_str(&urlc.url) {
+        Err(_) => Err(ApiError::InvalidUri(urlc.url)),
+        Ok(uri) => Ok(warp::redirect(uri)),
+    }
+}
+
+fn new_filter(
+    db_pool: AnyPool,
+    th_pool: Arc<rayon::ThreadPool>,
+) -> impl Filter<Extract = (impl Reply,), Error = Rejection> + Clone {
+    warp::any()
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(basic_auth_filter(db_pool.clone(), th_pool.clone()))
+        .and(warp::body::json())
+        .and_then(move |username, body: model::http::NewEntryRequest| {
+            let db_pool = db_pool.clone();
+            async move {
+                new(db_pool, username, body)
+                    .await
+                    .map_err(|ae| Rejection::from(ae))
+            }
+        })
+}
+
+async fn new(
+    db_pool: AnyPool,
+    username: String,
+    entry: model::http::NewEntryRequest,
+) -> ApiResult<impl Reply> {
+    let uri = match Uri::from_str(&entry.url) {
+        Err(_) => return Err(ApiError::InvalidUri(entry.url)),
+        Ok(uri) => uri,
+    };
+
+    let path = entry.path.trim().trim_matches('/');
+
+    let rows = sqlx::query("INSERT INTO redirect (\"user\", url, path) SELECT $1,$2,$3 WHERE NOT EXISTS(SELECT * FROM redirect WHERE path = $2)")
+        .bind(username)
+        .bind(uri.to_string())
+        .bind(path)
+        .execute(&db_pool)
+        .await
+        .map_err(ApiError::from)?
+        .rows_affected();
+
+    if rows != 1 {
+        Err(ApiError::PathAlreadyExists(entry.path))
+    } else {
+        Ok(reply::with_status(
+            reply::with_header("", "Location", entry.path),
+            StatusCode::CREATED,
+        ))
+    }
 }
 
 fn basic_auth_filter(
@@ -27,10 +137,6 @@ fn basic_auth_filter(
                 .flatten()
                 .map(|vec| String::from_utf8(vec).ok())
                 .flatten()
-                .map(|s| {
-                    println!("{}", s);
-                    s
-                })
         })
         .and_then(move |header: Option<String>| {
             let db_pool = db_pool.clone();
@@ -38,7 +144,7 @@ fn basic_auth_filter(
             async move {
                 match basic_auth(db_pool, th_pool, header).await {
                     Ok(username) => Ok(username),
-                    Err(e) => Err(e.into_rejection()),
+                    Err(e) => Err(Rejection::from(e)),
                 }
             }
         })
@@ -48,8 +154,8 @@ async fn basic_auth(
     pool: AnyPool,
     thread_pool: Arc<rayon::ThreadPool>,
     header: Option<String>,
-) -> Result<String> {
-    let s = header.ok_or(Error::HeaderDecode)?;
+) -> ApiResult<String> {
+    let s = header.ok_or(ApiError::AuthHeaderDecode)?;
 
     let mut it = s.splitn(2, ':');
 
@@ -65,8 +171,8 @@ async fn basic_auth(
                 .fetch_optional(&pool)
                 .await
             {
-                Err(e) => Err(Error::DbError(e)),
-                Ok(None) => Err(Error::Unauthorized),
+                Err(e) => Err(ApiError::from(e)),
+                Ok(None) => Err(ApiError::Unauthorized),
                 Ok(Some(user)) => {
                     let user: User = user;
                     let password = password.to_string();
@@ -76,13 +182,13 @@ async fn basic_auth(
 
                     match rx.await {
                         Ok(true) => Ok(username.to_string()),
-                        Ok(false) => Err(Error::Unauthorized),
-                        Err(_) => Err(Error::Unknown),
+                        Ok(false) => Err(ApiError::Unauthorized),
+                        Err(_) => Err(ApiError::Custom("failed to recieve check pw result")),
                     }
                 }
             }
         }
-        _ => Err(Error::HeaderDecode),
+        _ => Err(ApiError::AuthHeaderDecode),
     }
 }
 
@@ -92,10 +198,22 @@ fn check_password(password: String, pw_hash: String, tx: oneshot::Sender<bool>) 
     }
 }
 
+async fn handle_rejection(rejection: Rejection) -> std::result::Result<impl Reply, Infallible> {
+    if let Some(error) = rejection.find::<ApiError>() {
+        if let ApiError::NotFound = error {
+            Ok(warp::reply::with_status("", StatusCode::NOT_FOUND).into_response())
+        } else {
+            Ok(error.into_response())
+        }
+    } else {
+        Ok(warp::reply::with_status("", StatusCode::NOT_FOUND).into_response())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::basic_auth;
-    use crate::error::Error;
+    use crate::error::ApiError;
     use std::sync::Arc;
 
     const TEST_USER: &str = "test";
@@ -144,7 +262,7 @@ mod test {
         )
         .await;
 
-        if let Err(Error::Unauthorized) = res {
+        if let Err(ApiError::Unauthorized) = res {
             assert!(true);
         } else {
             assert!(false);
@@ -164,7 +282,7 @@ mod test {
 
         let res = basic_auth(db, Arc::new(th), Some(format!("{}:{}", TEST_USER, new))).await;
 
-        if let Err(Error::Unauthorized) = res {
+        if let Err(ApiError::Unauthorized) = res {
             assert!(true);
         } else {
             assert!(false);
@@ -182,7 +300,7 @@ mod test {
         )
         .await;
 
-        if let Err(Error::HeaderDecode) = res {
+        if let Err(ApiError::AuthHeaderDecode) = res {
             assert!(true);
         } else {
             assert!(false);

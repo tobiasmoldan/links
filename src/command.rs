@@ -5,7 +5,7 @@ use std::sync::Arc;
 use warp::Filter;
 
 use crate::config::{AddConfig, ServerConfig};
-use crate::error::{Error, Result};
+use crate::error::{ApplicationError, Result};
 use crate::server;
 
 pub fn run(config: &ServerConfig) -> Result<()> {
@@ -26,9 +26,12 @@ pub fn run(config: &ServerConfig) -> Result<()> {
     async fn run(config: &ServerConfig, th_pool: Arc<ThreadPool>) -> Result<()> {
         let db_pool = AnyPool::connect(&config.db_conn)
             .await
-            .map_err(Error::from)?;
+            .map_err(ApplicationError::from)?;
 
-        sqlx::migrate!().run(&db_pool).await.map_err(Error::from)?;
+        sqlx::migrate!()
+            .run(&db_pool)
+            .await
+            .map_err(ApplicationError::from)?;
 
         let filter = server::filter(db_pool.clone(), th_pool);
         let log = warp::log("links::api");
@@ -62,18 +65,20 @@ pub fn add_user(config: &AddConfig) -> Result<()> {
         password,
     } = config;
 
-    let password_hash =
-        hash(password, DEFAULT_COST).map_err(|_| Error::Custom("failed to hash password"))?;
+    let password_hash = hash(password, DEFAULT_COST)
+        .map_err(|_| ApplicationError::Custom("failed to hash password"))?;
 
     async fn run(db_url: &str, username: &str, password_hash: &str) -> Result<()> {
-        let mut connection = AnyConnection::connect(db_url).await.map_err(Error::from)?;
+        let mut connection = AnyConnection::connect(db_url)
+            .await
+            .map_err(ApplicationError::from)?;
 
         sqlx::query("INSERT INTO \"user\" (username, pw_hash) VALUES ($1,$2)")
             .bind(username)
             .bind(password_hash)
             .execute(&mut connection)
             .await
-            .map_err(Error::from)?;
+            .map_err(ApplicationError::from)?;
 
         Ok(())
     }

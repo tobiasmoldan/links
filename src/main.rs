@@ -5,13 +5,14 @@ use shadow_rs::shadow;
 use std::process::exit;
 use std::{env, str::FromStr};
 
-use error::{Error, Result};
+use error::{ApplicationError, Result};
 
 shadow!(build);
 
 mod command;
 mod config;
 mod error;
+mod model;
 mod server;
 
 fn main() {
@@ -49,7 +50,7 @@ fn main() {
     let result = match matches.subcommand() {
         ("run", matches) => run_server(matches),
         ("add", matches) => run_add(matches),
-        _ => Err(Error::InvalidCommand),
+        _ => Err(ApplicationError::InvalidCommand),
     };
 
     if let Err(e) = result {
@@ -90,34 +91,34 @@ fn run_add(matches: Option<&ArgMatches>) -> Result<()> {
     if let Some(matches) = matches {
         match matches.subcommand() {
             ("user", matches) => run_add_user(conn, matches),
-            _ => Err(Error::InvalidCommand),
+            _ => Err(ApplicationError::InvalidCommand),
         }
     } else {
-        Err(Error::InvalidCommand)
+        Err(ApplicationError::InvalidCommand)
     }
 }
 
 fn run_add_user(conn: Option<String>, matches: Option<&ArgMatches>) -> Result<()> {
     let conn = conn
         .or_else(|| parse(matches, "CONNECTION"))
-        .ok_or(Error::NoConnectionString)?;
+        .ok_or(ApplicationError::NoConnectionString)?;
 
     let user = matches
         .map(|matches| matches.value_of("NAME"))
         .flatten()
         .map(|s| s.to_string())
-        .ok_or(Error::InvalidCommand)?;
+        .ok_or(ApplicationError::InvalidCommand)?;
 
     println!("Enter password below:");
     let mut password = String::new();
     std::io::stdin()
         .read_line(&mut password)
-        .map_err(|_| Error::Custom("failed to read password"))?;
+        .map_err(|_| ApplicationError::Custom("failed to read password"))?;
 
     password = password.trim().to_string();
 
     if password.len() == 0 {
-        return Err(Error::Custom("password too short"));
+        return Err(ApplicationError::Custom("password too short"));
     }
 
     let config = config::AddConfig::User {
