@@ -73,6 +73,11 @@ pub fn add_user(config: &AddConfig) -> Result<()> {
             .await
             .map_err(ApplicationError::from)?;
 
+        sqlx::migrate!()
+            .run(&mut connection)
+            .await
+            .map_err(ApplicationError::from)?;
+
         sqlx::query("INSERT INTO \"user\" (username, pw_hash) VALUES ($1,$2)")
             .bind(username)
             .bind(password_hash)
