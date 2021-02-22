@@ -27,7 +27,7 @@ pub mod http {
     impl From<super::db::Entry> for EntryResponse {
         fn from(entry: super::db::Entry) -> Self {
             let date = NaiveDateTime::parse_from_str(&entry.created, "%Y-%m-%d %H:%M:%S")
-                .unwrap_or(NaiveDate::from_ymd(0, 1, 1).and_hms(0, 0, 0));
+                .unwrap_or_else(|_| NaiveDate::from_ymd(0, 1, 1).and_hms(0, 0, 0));
 
             EntryResponse {
                 created: DateTime::from_utc(date, Utc),

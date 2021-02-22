@@ -117,7 +117,7 @@ fn run_add_user(conn: Option<String>, matches: Option<&ArgMatches>) -> Result<()
 
     password = password.trim().to_string();
 
-    if password.len() == 0 {
+    if password.is_empty() {
         return Err(ApplicationError::Custom("password too short"));
     }
 

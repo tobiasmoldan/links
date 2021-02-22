@@ -49,7 +49,7 @@ pub fn run(config: &ServerConfig) -> Result<()> {
         Ok(())
     }
 
-    rt.block_on(run(config, th_pool.clone()))
+    rt.block_on(run(config, th_pool))
 }
 
 pub fn add_user(config: &AddConfig) -> Result<()> {

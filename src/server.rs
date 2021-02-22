@@ -14,8 +14,8 @@ pub fn filter(
 ) -> impl Filter<Extract = impl Reply, Error = Infallible> + Clone {
     warp::any()
         .and(new_filter(db_pool.clone(), th_pool.clone()))
-        .or(get_own_filter(db_pool.clone(), th_pool.clone()))
-        .or(get_filter(db_pool.clone()))
+        .or(get_own_filter(db_pool.clone(), th_pool))
+        .or(get_filter(db_pool))
         .recover(handle_rejection)
 }
 
@@ -83,15 +83,11 @@ fn new_filter(
     warp::any()
         .and(warp::path::end())
         .and(warp::post())
-        .and(basic_auth_filter(db_pool.clone(), th_pool.clone()))
+        .and(basic_auth_filter(db_pool.clone(), th_pool))
         .and(warp::body::json())
         .and_then(move |username, body: model::http::NewEntryRequest| {
             let db_pool = db_pool.clone();
-            async move {
-                new(db_pool, username, body)
-                    .await
-                    .map_err(|ae| Rejection::from(ae))
-            }
+            async move { new(db_pool, username, body).await.map_err(Rejection::from) }
         })
 }
 
