@@ -72,7 +72,7 @@ async fn get(db_pool: AnyPool, path: FullPath) -> ApiResult<impl Reply> {
 
     match Uri::from_str(&urlc.url) {
         Err(_) => Err(ApiError::InvalidUri(urlc.url)),
-        Ok(uri) => Ok(warp::redirect(uri)),
+        Ok(uri) => Ok(warp::redirect::temporary(uri)),
     }
 }
 
